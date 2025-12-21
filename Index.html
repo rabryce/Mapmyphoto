@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Photo Journey Map</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+```
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+    }
+    
+    #header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 20px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    
+    h1 {
+        font-size: 28px;
+        margin-bottom: 10px;
+    }
+    
+    #controls {
+        display: flex;
+        gap: 15px;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+    
+    #fileInput {
+        display: none;
+    }
+    
+    .btn {
+        background: white;
+        color: #667eea;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-weight: 600;
+        transition: transform 0.2s;
+    }
+    
+    .btn:hover {
+        transform: translateY(-2px);
+    }
+    
+    #status {
+        font-size: 14px;
+        opacity: 0.9;
+    }
+    
+    #map {
+        flex: 1;
+        width: 100%;
+    }
+    
+    .photo-popup img {
+        max-width: 200px;
+        max-height: 200px;
+        display: block;
+        margin-bottom: 5px;
+    }
+    
+    .photo-popup p {
+        margin: 5px 0;
+        font-size: 12px;
+    }
+</style>
+```
+
+</head>
+<body>
+    <div id="header">
+        <h1>📸 Photo Journey Map</h1>
+        <div id="controls">
+            <button class="btn" onclick="document.getElementById('fileInput').click()">
+                Load Photos
+            </button>
+            <input type="file" id="fileInput" multiple accept="image/*">
+            <span id="status">Load photos to see your journey</span>
+        </div>
+    </div>
+    <div id="map"></div>
+
+```
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exif-js/2.3.0/exif.min.js"></script>
+
+<script>
+    const map = L.map('map').setView([20, 0], 2);
+    
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors',
+        maxZoom: 19
+    }).addTo(map);
+    
+    let markers = [];
+    let polyline = null;
+    
+    document.getElementById('fileInput').addEventListener('change', handleFiles);
+    
+    async function handleFiles(e) {
+        const files = Array.from(e.target.files);
+        const status = document.getElementById('status');
+        
+        status.textContent = `Processing ${files.length} photos...`;
+        
+        // Clear existing markers and polyline
+        markers.forEach(m => map.removeLayer(m));
+        if (polyline) map.removeLayer(polyline);
+        markers = [];
+        
+        const photos = [];
+        
+        for (const file of files) {
+            const data = await extractPhotoData(file);
+            if (data) photos.push(data);
+        }
+        
+        if (photos.length === 0) {
+            status.textContent = 'No photos with location data found';
+            return;
+        }
+        
+        // Sort by date/time
+        photos.sort((a, b) => a.timestamp - b.timestamp);
+        
+        const coords = [];
+        
+        photos.forEach((photo, idx) => {
+            const marker = L.marker([photo.lat, photo.lng]).addTo(map);
+            
+            const popupContent = `
+                <div class="photo-popup">
+                    <img src="${photo.thumbnail}" alt="Photo ${idx + 1}">
+                    <p><strong>Photo ${idx + 1}</strong></p>
+                    <p>${photo.dateStr}</p>
+                    <p>📍 ${photo.lat.toFixed(6)}, ${photo.lng.toFixed(6)}</p>
+                </div>
+            `;
+            
+            marker.bindPopup(popupContent);
+            markers.push(marker);
+            coords.push([photo.lat, photo.lng]);
+        });
+        
+        // Draw path
+        polyline = L.polyline(coords, {
+            color: '#667eea',
+            weight: 3,
+            opacity: 0.7
+        }).addTo(map);
+        
+        // Fit map to show all markers
+        map.fitBounds(polyline.getBounds(), { padding: [50, 50] });
+        
+        status.textContent = `Mapped ${photos.length} photos`;
+    }
+    
+    function extractPhotoData(file) {
+        return new Promise((resolve) => {
+            const reader = new FileReader();
+            
+            reader.onload = function(e) {
+                const img = new Image();
+                img.src = e.target.result;
+                
+                img.onload = function() {
+                    EXIF.getData(img, function() {
+                        const lat = EXIF.getTag(this, 'GPSLatitude');
+                        const latRef = EXIF.getTag(this, 'GPSLatitudeRef');
+                        const lng = EXIF.getTag(this, 'GPSLongitude');
+                        const lngRef = EXIF.getTag(this, 'GPSLongitudeRef');
+                        const dateTime = EXIF.getTag(this, 'DateTime');
+                        
+                        if (!lat || !lng) {
+                            resolve(null);
+                            return;
+                        }
+                        
+                        const latDec = convertDMSToDD(lat, latRef);
+                        const lngDec = convertDMSToDD(lng, lngRef);
+                        
+                        let timestamp = Date.now();
+                        let dateStr = 'Unknown date';
+                        
+                        if (dateTime) {
+                            const parts = dateTime.split(' ');
+                            const datePart = parts[0].replace(/:/g, '-');
+                            const timePart = parts[1] || '00:00:00';
+                            timestamp = new Date(`${datePart}T${timePart}`).getTime();
+                            dateStr = new Date(timestamp).toLocaleString();
+                        }
+                        
+                        resolve({
+                            lat: latDec,
+                            lng: lngDec,
+                            timestamp: timestamp,
+                            dateStr: dateStr,
+                            thumbnail: e.target.result
+                        });
+                    });
+                };
+            };
+            
+            reader.readAsDataURL(file);
+        });
+    }
+    
+    function convertDMSToDD(dms, ref) {
+        const degrees = dms[0];
+        const minutes = dms[1];
+        const seconds = dms[2];
+        
+        let dd = degrees + minutes / 60 + seconds / 3600;
+        
+        if (ref === 'S' || ref === 'W') {
+            dd = dd * -1;
+        }
+        
+        return dd;
+    }
+</script>
+```
+
+</body>
+</html>
