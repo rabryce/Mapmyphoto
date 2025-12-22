@@ -13,7 +13,7 @@
             box-sizing: border-box;
         }
 
-```
+
     body {
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         height: 100vh;
@@ -81,7 +81,7 @@
         font-size: 12px;
     }
 </style>
-```
+
 
 </head>
 <body>
@@ -92,12 +92,15 @@
                 Load Photos
             </button>
             <input type="file" id="fileInput" multiple accept="image/*">
+            <button class="btn" onclick="clearJourney()" style="background: #ff6b6b; color: white;">
+                Clear Journey
+            </button>
             <span id="status">Load photos to see your journey</span>
         </div>
     </div>
     <div id="map"></div>
 
-```
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exif-js/2.3.0/exif.min.js"></script>
 
@@ -111,6 +114,9 @@
     
     let markers = [];
     let polyline = null;
+    
+    // Load saved journey on page load
+    window.addEventListener('load', loadSavedJourney);
     
     document.getElementById('fileInput').addEventListener('change', handleFiles);
     
@@ -170,6 +176,80 @@
         map.fitBounds(polyline.getBounds(), { padding: [50, 50] });
         
         status.textContent = `Mapped ${photos.length} photos`;
+        
+        // Save journey data to localStorage
+        saveJourney(photos);
+    }
+    
+    function saveJourney(photos) {
+        const journeyData = photos.map(photo => ({
+            lat: photo.lat,
+            lng: photo.lng,
+            timestamp: photo.timestamp,
+            dateStr: photo.dateStr
+        }));
+        
+        localStorage.setItem('photoJourney', JSON.stringify(journeyData));
+        console.log('Journey saved to localStorage');
+    }
+    
+    function loadSavedJourney() {
+        const saved = localStorage.getItem('photoJourney');
+        if (!saved) return;
+        
+        const photos = JSON.parse(saved);
+        const status = document.getElementById('status');
+        
+        if (photos.length === 0) return;
+        
+        const coords = [];
+        
+        photos.forEach((photo, idx) => {
+            const marker = L.marker([photo.lat, photo.lng]).addTo(map);
+            
+            const popupContent = `
+                <div class="photo-popup">
+                    <p><strong>Point ${idx + 1}</strong></p>
+                    <p>${photo.dateStr}</p>
+                    <p>📍 ${photo.lat.toFixed(6)}, ${photo.lng.toFixed(6)}</p>
+                    <p style="font-size: 11px; opacity: 0.7;">Upload photos to see thumbnails</p>
+                </div>
+            `;
+            
+            marker.bindPopup(popupContent);
+            markers.push(marker);
+            coords.push([photo.lat, photo.lng]);
+        });
+        
+        // Draw path
+        polyline = L.polyline(coords, {
+            color: '#667eea',
+            weight: 3,
+            opacity: 0.7
+        }).addTo(map);
+        
+        // Fit map to show all markers
+        map.fitBounds(polyline.getBounds(), { padding: [50, 50] });
+        
+        status.textContent = `Loaded saved journey with ${photos.length} points`;
+    }
+    
+    function clearJourney() {
+        if (!confirm('Are you sure you want to clear your saved journey?')) return;
+        
+        // Clear map
+        markers.forEach(m => map.removeLayer(m));
+        if (polyline) map.removeLayer(polyline);
+        markers = [];
+        polyline = null;
+        
+        // Clear localStorage
+        localStorage.removeItem('photoJourney');
+        
+        // Reset map view
+        map.setView([20, 0], 2);
+        
+        document.getElementById('status').textContent = 'Journey cleared';
     }
     
     function extractPhotoData(file) {
@@ -236,7 +316,7 @@
         return dd;
     }
 </script>
-```
+
 
 </body>
 </html>
